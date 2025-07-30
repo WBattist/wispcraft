@@ -254,18 +254,15 @@ export async function joinServer(
 	digest: string,
 	uuid: string
 ) {
-	const res = await epoxyFetch(
-		"https://sessionserver.mojang.com/session/minecraft/join",
-		{
-			headers: {
-				"Content-Type": "application/json",
-			},
-			method: "POST",
-			body: JSON.stringify({
-				selectedProfile: uuid,
-				serverId: digest,
-				accessToken: mcToken,
-			}),
-		}
-	);
+	await epoxyFetch("https://sessionserver.mojang.com/session/minecraft/join", {
+		headers: {
+			"Content-Type": "application/json",
+		},
+		method: "POST",
+		body: JSON.stringify({
+			selectedProfile: uuid,
+			serverId: digest,
+			accessToken: mcToken,
+		}),
+	});
 }
