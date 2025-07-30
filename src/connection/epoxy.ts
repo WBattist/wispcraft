@@ -11,7 +11,7 @@ let connectedwisp = "";
 
 let epoxy: EpoxyClient | null = null;
 
-let resolver;
+let resolver: (value: unknown) => void;
 let initpromise = new Promise((r) => (resolver = r));
 let initted = false;
 
@@ -32,13 +32,11 @@ export async function initWisp(wisp: string) {
 	options.udp_extension_required = false;
 	connectedwisp = wisp;
 	epoxy = new EpoxyClient(wisp, options);
-	resolver();
+	resolver(true);
 }
 
 export async function epoxyFetch(url: string, opts?: any): Promise<Response> {
 	await initpromise;
-
-	// create() inits epoxy
 	return await epoxy!.fetch(url, opts);
 }
 
@@ -48,8 +46,6 @@ export async function epoxyWs(
 	protocols?: string | string[]
 ): Promise<EpoxyWebSocket> {
 	await initpromise;
-
-	// create() inits epoxy
 	return await epoxy!.connect_websocket(
 		handlers,
 		uri,
@@ -60,12 +56,20 @@ export async function epoxyWs(
 
 export async function connect_tcp(socket: string): Promise<EpoxyIoStream> {
 	await initpromise;
-
-	// create() inits epoxy
 	return await epoxy!.connect_tcp(socket);
 }
 
 export function set_wisp_server(wisp_url: string) {
+    if (epoxy) {
+        try {
+            // The library's cleanup method is likely named `free` or `close`.
+            // Using `free` as a placeholder.
+            epoxy.free(); 
+        } catch (e) {
+            console.error("Error freeing old epoxy client:", e);
+        }
+    }
+
 	initpromise = new Promise((r) => (resolver = r));
 	setWispUrl(wisp_url);
 	initWisp(wisp_url);
@@ -73,6 +77,5 @@ export function set_wisp_server(wisp_url: string) {
 
 export async function reconnect() {
 	await initpromise;
-
 	await epoxy!.replace_stream_provider();
 }
