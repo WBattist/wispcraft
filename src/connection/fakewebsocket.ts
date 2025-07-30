@@ -41,13 +41,14 @@ class WispWS extends EventTarget {
 						})
 					);
 				}
-				this.readyState = WebSocket.CLOSING;
+			} catch (err) {
+				console.error("WispWS read loop error:", err);
+				this.dispatchEvent(new Event("error"));
+			} finally {
+                this.readyState = WebSocket.CLOSING;
 				this.dispatchEvent(new Event("close"));
 				this.readyState = WebSocket.CLOSED;
-			} catch (err) {
-				console.error(err);
-				this.dispatchEvent(new Event("error"));
-			}
+            }
 		})();
 	}
 
@@ -77,7 +78,7 @@ class WispWS extends EventTarget {
 				this.dispatchEvent(new CloseEvent("close"));
 				return;
 			}
-			localStorage["disclaimer_accepted"] = 1;
+			localStorage["disclaimer_accepted"] = "true";
 		}
 
 		this.inner.eaglerIn.write(buf);
@@ -91,8 +92,10 @@ class WispWS extends EventTarget {
 			return;
 		}
 		this.readyState = WebSocket.CLOSING;
+		// FIXED: Aborting both streams ensures the full teardown logic in Connection is triggered.
 		try {
 			this.inner.eaglerIn.abort();
+            this.inner.eaglerOut.cancel();
 		} catch (err) {}
 		this.readyState = WebSocket.CLOSED;
 	}
@@ -101,10 +104,7 @@ class SettingsWS extends EventTarget {
 	readyState: number;
 	constructor() {
 		super();
-		this.readyState = WebSocket.CLOSED;
-		setTimeout(() => {
-			this.dispatchEvent(new Event("open"));
-		});
+		this.readyState = WebSocket.OPEN;
 	}
 	send(chunk: Uint8Array | ArrayBuffer | string) {
 		if (typeof chunk === "string" && chunk.toLowerCase() === "accept: motd") {
@@ -134,7 +134,7 @@ class SettingsWS extends EventTarget {
 			);
 			fetch(wispcraft)
 				.then((response) => response.blob())
-				.then((blob) => createImageBitmap(blob))
+				.then((image) => createImageBitmap(image))
 				.then((image) => {
 					let canvas = new OffscreenCanvas(image.width, image.height);
 					let ctx = canvas.getContext("2d")!;
@@ -227,139 +227,80 @@ class EpoxyWS extends EventTarget {
 }
 
 class AutoWS extends EventTarget {
-	inner: WebSocket | WispWS | EpoxyWS | null;
-	url: string;
-	queue: Array<Uint8Array | ArrayBuffer | string>;
+	inner: WebSocket | WispWS | EpoxyWS | null = null;
+    queue: Array<Uint8Array | ArrayBuffer | string> = [];
 
 	constructor(uri: string, protocols?: string | string[]) {
 		super();
-		this.queue = [];
-		let flag2 = false;
-		let flag3 = false;
-		const url = new URL(uri);
-		this.inner = null;
-		this.url = url.protocol + "//java://" + url.hostname;
-		const el = (event: Event) => {
-			switch (event.type.toLowerCase()) {
-				case "close":
-					this.dispatchEvent(new CloseEvent("close", event));
-					break;
-				case "message":
-					this.dispatchEvent(new MessageEvent("message", event));
-					break;
-				default:
-					this.dispatchEvent(new Event(event.type, event));
-			}
-		};
-		let flag = false;
-		const el3 = (event: Event) => {
-			called = true;
-			if (this.inner != null) {
-				this.inner.removeEventListener("close", el2);
-				this.inner.removeEventListener("error", el2);
-				this.inner.addEventListener("close", el);
-				this.inner.addEventListener("error", el);
-				flag = true;
-				for (let item of this.queue) {
-					this.inner.send(item);
-				}
-				this.queue.length = 0;
-			}
-			el(event);
-		};
-		let ti: any = -1;
-		let called = false;
-		const el2 = () => {
-			if (called) {
-				return;
-			}
-			called = true;
-			if (ti != -1) {
-				clearTimeout(ti);
-				ti = -1;
-			}
-			if (this.inner != null) {
-				if (flag) {
-					this.inner.removeEventListener("close", el);
-					this.inner.removeEventListener("error", el);
-				} else {
-					this.inner.removeEventListener("close", el2);
-					this.inner.removeEventListener("error", el2);
-				}
-				this.inner.removeEventListener("open", el3);
-				this.inner.removeEventListener("message", el);
-			}
-			if (!flag2 && url.protocol.length == 3) {
-				flag2 = true;
-				called = false;
-				flag = false;
-				const bt = (this.inner as WebSocket)?.binaryType || "arraybuffer";
-				this.inner?.close();
-				this.inner = null;
-				ti = setTimeout(el2, 2000);
-				try {
-					this.inner = new NativeWebSocket("ws" + uri.slice(1), protocols);
-					this.inner.binaryType = bt;
-					this.inner.addEventListener("close", el2);
-					this.inner.addEventListener("error", el2);
-					this.inner.addEventListener("open", el3);
-					this.inner.addEventListener("message", el);
-				} catch (e) {
-					el2();
-				}
-				return;
-			}
-			if (!flag3) {
-				flag3 = true;
-				called = false;
-				flag = false;
-				flag2 = false;
-				const bt = (this.inner as WebSocket)?.binaryType || "arraybuffer";
-				this.inner?.close();
-				this.inner = null;
-				ti = setTimeout(el2, 2000);
-				try {
-					this.inner = new EpoxyWS(uri, protocols);
-					this.inner.binaryType = bt;
-					this.inner.addEventListener("close", el2);
-					this.inner.addEventListener("error", el2);
-					this.inner.addEventListener("open", el3);
-					this.inner.addEventListener("message", el);
-				} catch (e) {
-					el2();
-				}
-				return;
-			}
-			this.inner = new WispWS(this.url);
-			this.inner.addEventListener("close", el);
-			this.inner.addEventListener("error", el);
-			this.inner.addEventListener("open", el);
-			this.inner.addEventListener("message", el);
-			this.inner.start();
-			for (let item of this.queue) {
-				this.inner.send(item);
-			}
-			this.queue.length = 0;
-		};
-		ti = setTimeout(el2, 2000);
-		try {
-			const ws = new NativeWebSocket(uri, protocols);
-			if (this.inner != null) {
-				ws.close();
-				return;
-			}
-			this.inner = ws;
-			this.inner.addEventListener("close", el2);
-			this.inner.addEventListener("error", el2);
-			this.inner.addEventListener("open", el3);
-			this.inner.addEventListener("message", el);
-		} catch (e) {
-			el2();
-		}
+        this.tryConnectionMethods(uri, protocols);
 	}
+    
+    async tryConnectionMethods(uri: string, protocols?: string | string[]) {
+        const url = new URL(uri);
+        const connectionMethods = [
+            // Method 1: Try native WebSocket (secure only)
+            () => {
+                if (url.protocol !== "ws:" && url.protocol !== "wss:") return null;
+                const secureUrl = new URL(url.toString());
+                secureUrl.protocol = "wss:";
+                return new NativeWebSocket(secureUrl.toString(), protocols);
+            },
+            // Method 2: Try Epoxy (TLS-in-JS WebSocket)
+            () => new EpoxyWS(uri, protocols),
+            // Method 3: Fallback to Wisp (Java protocol proxy)
+            () => {
+                const wispUri = `java://${url.hostname}:${url.port || "25565"}`;
+                const ws = new WispWS(wispUri);
+                ws.start();
+                return ws;
+            }
+        ];
+
+        for (const method of connectionMethods) {
+            try {
+                const ws = method();
+                if (!ws) continue; // Skip if method is not applicable
+
+                // Wait for this connection attempt to either open or fail
+                const result = await new Promise<Event>((resolve) => {
+                    ws.addEventListener('open', resolve, { once: true });
+                    ws.addEventListener('error', resolve, { once: true });
+                    ws.addEventListener('close', resolve, { once: true });
+                });
+
+                if (result.type === 'open') {
+                    // Success! This is our connection now.
+                    this.inner = ws;
+                    // Re-route events
+                    ws.removeEventListener('open', result.target.listeners.get('open')[0]);
+                    ws.removeEventListener('error', result.target.listeners.get('error')[0]);
+                    ws.removeEventListener('close', result.target.listeners.get('close')[0]);
+                    
+                    ws.addEventListener('message', (e) => this.dispatchEvent(new MessageEvent('message', e)));
+                    ws.addEventListener('close', (e) => this.dispatchEvent(new CloseEvent('close', e)));
+                    ws.addEventListener('error', (e) => this.dispatchEvent(new Event('error', e)));
+                    
+                    this.dispatchEvent(new Event('open'));
+
+                    // Send any queued messages
+                    for (const item of this.queue) {
+                        this.inner.send(item);
+                    }
+                    this.queue = [];
+                    return; // Stop trying other methods
+                }
+            } catch (e) {
+                console.warn("Connection method failed to construct:", e);
+            }
+        }
+        
+        console.error("All connection methods failed.");
+        this.dispatchEvent(new Event("error"));
+        this.dispatchEvent(new CloseEvent("close"));
+    }
 
 	send(chunk: Uint8Array | ArrayBuffer | string) {
-		if (this.inner == null || this.inner.readyState == WebSocket.CONNECTING) {
+		if (this.inner == null || this.readyState == WebSocket.CONNECTING) {
 			this.queue.push(chunk);
 		} else {
 			return this.inner.send(chunk);
@@ -399,11 +340,13 @@ const NativeWebSocket = WebSocket;
 export function makeFakeWebSocket(): typeof WebSocket {
 	return new Proxy(WebSocket, {
 		construct(_target, [uri, protos]) {
+			// Do not proxy the proxy's own connection
 			if (uri == wispUrl) {
 				return new NativeWebSocket(uri, protos);
 			}
 
 			let url = new URL(uri);
+            // Eagler uses custom protocols in the hostname part of the URL
 			let isCustomProtocol = url.port == "" && url.pathname.startsWith("//");
 
 			if (isCustomProtocol && url.hostname == "java") {
@@ -413,6 +356,7 @@ export function makeFakeWebSocket(): typeof WebSocket {
 			} else if (isCustomProtocol && url.hostname == "settings") {
 				return new SettingsWS();
 			} else {
+                // For regular ws:// or wss://, use the auto-fallback logic
 				return new AutoWS(uri, protos);
 			}
 		},
