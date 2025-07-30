@@ -16,6 +16,7 @@ import { joinServer } from "./auth";
 import { VERSION, type AuthStore } from ".";
 // import { authstore } from "./index";
 
+// https://wiki.vg/Protocol_version_numbers
 // https://minecraft.wiki/w/Protocol?oldid=2772100
 enum State {
 	Handshaking = 0x0,
@@ -24,7 +25,7 @@ enum State {
 	Play = 0x3,
 }
 
-// EAG_ prefixed are nonstandard
+// PACKET IDs UPDATED FOR 1.12.2
 enum Serverbound {
 	/* ==HANDSHAKING== */
 	Handshake = 0x00,
@@ -39,7 +40,7 @@ enum Serverbound {
 	LoginStart = 0x00,
 	EncryptionResponse = 0x01,
 	/* ==PLAY== */
-	PluginMessage = 0x17,
+	PluginMessage = 0x09,
 }
 
 enum Clientbound {
@@ -57,11 +58,9 @@ enum Clientbound {
 	LoginSuccess = 0x02,
 	SetCompression = 0x03,
 	/* ==PLAY== */
-	SetCompressionPlay = 0x46,
-	PluginMessage = 0x3f,
+	PluginMessage = 0x18,
 }
-
-const MINECRAFT_PROTOCOL_VERSION = 47;
+const MINECRAFT_PROTOCOL_VERSION = 340;
 
 class Packet extends Buffer {
 	constructor(packetType: number) {
@@ -167,6 +166,7 @@ export class EaglerProxy {
 								0,
 								3,
 								0,
+								// This now uses the updated protocol version for 1.12.2
 								MINECRAFT_PROTOCOL_VERSION,
 								brand.length,
 							]);
@@ -392,12 +392,6 @@ export class EaglerProxy {
 				break;
 			case State.Play:
 				switch (packet.readVarInt(false)) {
-					case Clientbound.SetCompressionPlay:
-						packet.readVarInt();
-						let threshold = packet.readVarInt();
-						this.decompressor.compressionThresh = threshold;
-						this.compressor.compressionThresh = threshold;
-						break;
 					case Clientbound.PluginMessage:
 						let pk = packet.copy();
 						pk.readVarInt();
