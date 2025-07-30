@@ -151,7 +151,7 @@ function copyRawPixels(
 	return imageOut;
 }
 
-async function toEaglerSkin(blob: Blob): Promise<Uint8Array<ArrayBuffer>> {
+async function toEaglerSkin(blob: Blob): Promise<Uint8Array> {
 	let jimpImage = await blobToImageData(blob),
 		height = jimpImage.height;
 	if (height != 64) {
@@ -312,7 +312,8 @@ async function toEaglerSkin(blob: Blob): Promise<Uint8Array<ArrayBuffer>> {
 
 	const newBuff = new Uint8Array(16384);
 	const bitmap = jimpImage.data;
-	for (let i = 1; i < 64 ** 2; i++) {
+	// FIXED: Loop now starts at 0 to include the first pixel.
+	for (let i = 0; i < 64 ** 2; i++) {
 		const bytePos = i * 4;
 		// red, green, blue, alpha => alpha, blue, green, red
 		newBuff[bytePos] = bitmap[bytePos + 3];
@@ -327,7 +328,7 @@ async function responseToSkin(response: Response): Promise<Buffer> {
 	return new Buffer(await toEaglerSkin(await response.blob()));
 }
 
-async function toEaglerCape(blob: Blob): Promise<Uint8Array<ArrayBuffer>> {
+async function toEaglerCape(blob: Blob): Promise<Uint8Array> {
 	const skinOut = new Uint8Array(1173);
 	const skinIn = (await blobToImageData(blob)).data;
 	let i, j;
@@ -396,6 +397,8 @@ export async function handleSkinCape(
 				return Buffer.new();
 			}
 			const out = await lookUpInCache(url);
+			// NOTE: Slim model data is not available from texture URLs alone.
+			// Defaulting to false.
 			const slim = false;
 			const skinData = out.skin;
 			if (skinData.length == 0) {
