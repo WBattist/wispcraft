@@ -1,13 +1,11 @@
 import { EaglerProxy } from "../1.8";
-import { connect_tcp } from "./epoxy";
-import { epoxyFetch } from "./epoxy";
+import { connect_tcp, epoxyFetch } from "./epoxy";
 import { Buffer } from "../buffer";
 import {
 	bufferTransformer,
 	bufferWriter,
 	BytesReader,
 	BytesWriter,
-	eagerlyPoll,
 	lengthTransformer,
 	writeTransform,
 } from "./framer";
@@ -90,13 +88,17 @@ export class Connection {
 				const hostname = data[3];
 				connectUrl = new URL(`java://${hostname}:${port}`);
 			}
-		} catch {}
+		} catch (e) {
+            console.warn("SRV lookup failed, falling back to provided address:", e);
+        }
+
 		const conn = await connect_tcp(
 			connectUrl ? connectUrl.host : this.url.host
 		);
 		connectcallback();
-		const writer = bufferWriter(conn.write.getWriter());
-		this.rawEpoxy = writer.getWriter();
+
+		const epoxyWriter = conn.write.getWriter();
+		this.rawEpoxy = bufferWriter(epoxyWriter).getWriter();
 
 		const impl = new EaglerProxy(
 			this.processOut,
@@ -111,68 +113,61 @@ export class Connection {
 			this.url.port ? parseInt(this.url.port) : 25565,
 			this.authStore
 		);
+        this.impl = impl;
 
-		// epoxy -> process -> (hopefully) eagler task
-		(async () => {
-			let backlog = 0;
-			const reader = eagerlyPoll<Buffer>(
-				conn.read
+		// Define a single cleanup function to tear down the entire connection
+		const cleanup = () => {
+			console.log("Cleaning up connection...");
+			// Closing/cancelling one stream will propagate through the chain,
+			// but we do it explicitly to be safe.
+			epoxyWriter.close().catch(e => console.error("Error closing epoxy writer:", e));
+			this.processIn.cancel().catch(e => console.error("Error cancelling processIn:", e));
+		};
+
+		// Task for handling data from Server -> Client
+		const serverToClient = async () => {
+			try {
+				const reader = conn.read
 					.pipeThrough(bufferTransformer())
 					.pipeThrough(impl.decryptor.transform)
 					.pipeThrough(lengthTransformer())
 					.pipeThrough(impl.decompressor.transform)
-					.getReader(),
-				100,
-				() => backlog++
-			).getReader();
+					.getReader();
 
-			while (true) {
-				const { done, value } = await reader.read();
-				if (done || !value) return;
-
-				await impl.epoxyRead(value);
-				backlog--;
+				while (true) {
+					const { done, value } = await reader.read();
+					if (done || !value) break;
+					await impl.epoxyRead(value);
+				}
+			} finally {
+				cleanup();
 			}
+		};
 
-			// TODO cleanup
-		})();
-
-		// eagler -> process -> (hopefully) epoxy task
-		(async () => {
-			let backlog = 0;
-			const reader = eagerlyPoll<Buffer>(
-				this.processIn,
-				100,
-				() => backlog++
-			).getReader();
-
-			while (true) {
-				const start = performance.now();
-				const { done, value } = await reader.read();
-				if (done || !value) return;
-				await impl.eaglerRead(value);
-				backlog--;
+		const clientToServer = async () => {
+			try {
+				const reader = this.processIn;
+				while (true) {
+					const { done, value } = await reader.read();
+					if (done || !value) break;
+					await impl.eaglerRead(value);
+				}
+			} finally {
+				cleanup();
 			}
+		};
 
-			// TODO cleanup
-		})();
-		this.impl = impl;
+		serverToClient().catch(e => {
+			console.error("Server->Client pipe failed:", e);
+			cleanup();
+		});
+		clientToServer().catch(e => {
+			console.error("Client->Server pipe failed:", e);
+			cleanup();
+		});
 	}
 
 	ping() {
 		this.impl?.ping();
-		// legacy ping (https://c4k3.github.io/wiki.vg/Server_List_Ping.html)
-		// not a normal packet
-		// let legacy = Buffer.new();
-		// legacy.writeBytes([0xfe, 0x01, 0xfa]);
-		// let magic = new Buffer(new TextEncoder().encode("MC|PingHost"));
-		// legacy.writeUShort(magic.length);
-		// legacy.extend(magic);
-		// legacy.writeUShort(7 + 2 * this.url.hostname.length);
-		// legacy.writeUShort(74);
-		// legacy.writeUShort(this.url.hostname.length);
-		// legacy.extend(new Buffer(new TextEncoder().encode(this.url.hostname)));
-		// legacy.writeUShort(this.url.port ? parseInt(this.url.port) : 25565);
-		// this.rawEpoxy?.write(legacy);
 	}
 }
