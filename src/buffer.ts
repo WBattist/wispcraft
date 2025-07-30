@@ -82,22 +82,19 @@ export class Buffer {
 	}
 
 	readLong(): number {
-		let ret = 0;
-		for (let i = 0; i < 8; i++) {
-			ret |= this.get(i) << (i * 8);
-		}
+		const view = new DataView(this.inner.buffer, this.inner.byteOffset, 8);
+		const num = Number(view.getBigInt64(0, false));
 		this.take(8);
-		return ret;
+		return num;
 	}
 
 	writeLong(num: number) {
-		for (let i = 0; i < 8; i++) {
-			this.extend(new Buffer([num & 0xff]));
-			num >>= 8;
-		}
+		const buffer = new ArrayBuffer(8);
+		const view = new DataView(buffer);
+		view.setBigInt64(0, BigInt(num), false);
+		this.extend(new Buffer(new Uint8Array(buffer)));
 	}
 
-	// you can probably make this better
 	readVarInt(take: boolean = true): number {
 		let index = 0;
 		let result = 0;
